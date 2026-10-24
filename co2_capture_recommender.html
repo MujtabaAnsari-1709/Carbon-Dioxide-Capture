@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CO₂ Capture Recommender</title>
+<style>
+:root{--bg:#f6f7f4;--card:#fff;--tx:#1d2a22;--mu:#5f6d65;--ac:#1f7a52;--bd:#d8dfd9;--bar:#cfe6da;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121815;--card:#1b241f;--tx:#e8eee9;--mu:#9bab a1;--mu:#9baba1;--ac:#4cc38a;--bd:#2d3a33;--bar:#264236}}
+:root[data-theme="dark"]{--bg:#121815;--card:#1b241f;--tx:#e8eee9;--mu:#9baba1;--ac:#4cc38a;--bd:#2d3a33;--bar:#264236}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:920px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.5rem;margin:0 0 4px}p.s{color:var(--mu);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+label{display:block;font-size:.8rem;color:var(--mu);margin-bottom:3px}
+input,select{width:100%;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+button{margin-top:14px;padding:10px 20px;border:0;border-radius:8px;background:var(--ac);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.top h2{margin:0 0 2px;font-size:1.25rem;color:var(--ac)}.chip{display:inline-block;background:var(--bar);border-radius:99px;padding:2px 10px;font-size:.8rem;margin:2px 4px 2px 0}
+.row{display:grid;grid-template-columns:150px 1fr 48px;gap:8px;align-items:center;margin:6px 0;font-size:.9rem}
+.bar{height:10px;background:var(--bar);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ac)}
+.n{font-size:.8rem;color:var(--mu)}ul{margin:6px 0;padding-left:18px}
+</style></head><body><main>
+<h1>CO₂ Capture Recommender</h1>
+<p class="s">Enter your gas conditions to get the best-fit capture technology and material. Rule-based screening, calibrated with a CCS project registry (Jan 2023, 417 projects).</p>
+<div class="card"><div class="g">
+<div><label>Source / capture route</label><select id="route">
+<option value="Post-Combustion">Coal flue gas (~13% CO₂)</option><option value="PC-NG">Natural-gas power flue gas (~4% CO₂)</option><option value="PC-Cement">Cement kiln flue gas (~15% CO₂)</option>
+<option value="Pre-Combustion">Syngas (pre-combustion / gasification)</option>
+<option value="Oxycombustion">Oxy-fuel flue gas</option>
+<option value="Industrial">Industrial (cement, steel, refinery)</option>
+<option value="Separation">Natural gas / biogas processing</option>
+<option value="Direct air capture">Ambient air (DAC)</option></select></div>
+<div><label>CO₂ concentration (vol %)</label><input id="y" type="number" value="12" step="0.01" min="0.01" max="100"></div>
+<div><label>Total pressure (bar abs)</label><input id="P" type="number" value="1.1" step="0.1" min="0.5"></div>
+<div><label>Gas temperature (°C)</label><input id="T" type="number" value="50" step="1"></div>
+<div><label>Capture scale (t CO₂/day)</label><input id="sc" type="number" value="1000" min="1"></div>
+<div><label>Contaminants</label><select id="imp"><option value="0">Clean / treated gas</option><option value="1">SO₂ / NOₓ / O₂ present</option><option value="2">H₂S / sulfur present</option></select></div>
+<div><label>Gas moisture</label><select id="wet"><option value="1">Humid / saturated</option><option value="0">Dry</option></select></div>
+<div><label>Product CO₂ purity needed</label><select id="pur"><option value="0">Standard (&gt;95%)</option><option value="1">Very high (&gt;99.5%)</option></select></div>
+</div><button id="go">Find best option</button></div>
+<div id="out"></div>
+<div class="card n"><b>Notes.</b> The registry has no temperature, pressure or material data, so it supplies only the “projects using this technology on this route” prior (about 20% of the score). The remaining 80% is engineering screening rules (partial-pressure, temperature, scale, contaminant and purity windows) drawn from general literature values. Treat results as a first-pass screen, not a design; validate with process simulation or experimental isotherms.<br><br><b>Evidence status.</b> Source gas presets (coal ~13%, natural gas ~4%, cement ~15%, syngas ~35% CO₂) and the membrane, sorbent and DAC figures come from a first literature pass. Most of those sources are not ScienceDirect open-access papers, and cost figures use different years and currencies, so they are shown as evidence, not used in the score.</div>
+</main>
+<script>
+const D={"Post-Combustion":{A:50,N:11,M:9,S:3,C:2,X:4},"Pre-Combustion":{A:8,N:2,P:6,M:3,C:1},"Oxycombustion":{P:1,X:8},"Industrial":{A:4,N:1,S:1,C:1},"Separation":{A:8,P:1,M:1},"Direct air capture":{}};
+const MAXC=50;
+// window score: 1 inside [lo,hi], decays over a log (or linear) distance outside
+function wl(v,lo,hi){if(v>=lo&&v<=hi)return 1;const d=v<lo?Math.log10(lo/v):Math.log10(v/hi);return Math.max(0,1-d/1.2)}
+function wt(v,lo,hi,w){if(v>=lo&&v<=hi)return 1;const d=v<lo?lo-v:v-hi;return Math.max(0,1-d/w)}
+const TECH=[
+{k:"A",n:"Amine absorption (chemical solvent)",pc:[.03,1.5],t:[25,70],sc:[50,1e5],note:"Mature, proven at scale on dilute flue gas; high regeneration heat.",
+ pen:(c)=>(c.imp==1?.25:0)+(c.imp==2?.1:0),
+ mats:[{n:"MEA 30 wt% (benchmark)",pc:[.03,.2],t:[35,60],imp:-.3},{n:"Piperazine / MDEA blends (lower regen energy)",pc:[.1,3],t:[35,70],imp:-.1},{n:"Hindered amines e.g. KS-1 / CANSOLV",pc:[.05,.5],t:[30,60],imp:0},{n:"Amino-acid salt solvents (O₂/SO₂ tolerant)",pc:[.03,.5],t:[30,60],imp:.15}]},
+{k:"N",n:"Chilled ammonia process",pc:[.05,.4],t:[2,30],sc:[500,1e5],note:"Low regeneration energy and tolerant of flue-gas impurities; needs chilling and ammonia-slip control.",
+ pen:(c)=>c.imp==1?-.05:0,
+ mats:[{n:"Aqueous ammonia (NH₃ / ammonium carbonate)",pc:[.05,.4],t:[2,30],imp:.1}]},
+{k:"P",n:"Physical solvent absorption",pc:[4,60],t:[-45,45],sc:[200,1e5],note:"Efficient only at high CO₂ partial pressure; handles H₂S and gives low-energy flash regeneration.",
+ pen:(c)=>c.imp==2?-.15:0,
+ mats:[{n:"Selexol (DME of PEG)",pc:[4,60],t:[-5,45],imp:.1},{n:"Rectisol (cold methanol, ultra-clean)",pc:[4,60],t:[-45,-10],imp:.15,pur:.15},{n:"Propylene carbonate (Fluor Solvent)",pc:[4,40],t:[0,40],imp:0}]},
+{k:"M",n:"Membrane separation",pc:[.05,40],t:[-10,80],sc:[1,800],note:"Compact, no regeneration heat. Viable on flue gas with vacuum or air-sweep designs; cost rises as CO₂ concentration falls (steeply below ~1%), and high purity needs staging.",
+ pen:(c)=>(c.pur?.35:0),
+ mats:[{n:"Polymeric (PolarisTM-type, polyimide / PEO)",pc:[.8,40],t:[0,70],imp:0},{n:"Facilitated-transport (PEI / amine carriers)",pc:[.1,5],t:[10,60],imp:-.1,wet:.15},{n:"Mixed-matrix (polymer + MOF / zeolite)",pc:[.5,20],t:[10,80],imp:-.1}]},
+{k:"S",n:"Solid sorbent adsorption (PSA / VSA / TSA)",pc:[.01,5],t:[0,150],sc:[1,400],note:"Low-energy at small to medium scale; moisture and contaminants strongly affect capacity.",
+ pen:(c)=>(c.imp?.2:0),
+ mats:[{n:"MOFs e.g. Mg-MOF-74 / UTSA-16 (high capacity, kept capacity in humid tests)",pc:[.01,1],t:[10,50],dry:.1},{n:"Zeolite 13X (VSA / PSA, capacity drops with moisture)",pc:[.05,2],t:[10,50],dry:.2},{n:"Amine-functionalised silica / carbon (humid tolerant, TSA)",pc:[.01,.5],t:[25,100],wet:.15},{n:"Activated carbon (high-pressure PSA)",pc:[1,20],t:[10,60]},{n:"K₂CO₃-promoted hydrotalcite (SEWGS)",pc:[1,30],t:[200,450],imp:.1}]},
+{k:"C",n:"Cryogenic / controlled-freeze separation",pc:[2,50],t:[-80,30],sc:[100,1e5],note:"Delivers high-purity liquid CO₂; viable only with high CO₂ content, otherwise too energy-intensive.",
+ pen:(c)=>(c.y<15?.3:0),mats:[{n:"No material (refrigeration cycle / CFZ column)",pc:[2,50],t:[-80,30]}]},
+{k:"X",n:"Oxy-fuel combustion capture",pc:[.5,1.2],t:[30,200],sc:[500,1e5],note:"CO₂-rich flue gas needing only condensation and purification; needs an air-separation unit.",
+ pen:(c)=>(c.rt=="Oxycombustion"?-.5:.6),mats:[{n:"Cryogenic ASU + flue-gas CO₂ purification unit",pc:[.5,1.2],t:[30,200]}]},
+{k:"L",n:"Calcium looping (high-temperature solid)",pc:[.03,.3],t:[550,750],sc:[500,1e5],note:"Suited to hot gas from cement or power; integrates with cement kilns.",
+ pen:(c)=>0,mats:[{n:"CaO / limestone sorbent",pc:[.03,.3],t:[600,720]}]},
+{k:"D",n:"Direct air capture",pc:[.0002,.0008],t:[-10,45],sc:[.1,1e4],note:"Only technology for ambient air (about 420 ppm); very high energy and cost per tonne.",
+ pen:(c)=>0,mats:[{n:"Aqueous KOH / Ca-loop liquid contactor",pc:[.0002,.0008],t:[5,40],wet:.1},{n:"Amine-functionalised solid sorbent (TVSA)",pc:[.0002,.0008],t:[-10,45],wet:.05}]}];
+const EV={M:"Reported ~$40/t (hybrid air-sweep design, 2007 USD), ~$76/t (cement-kiln study, ~15% CO₂), ~$270–305/t at ~1% CO₂ (2011 USD). Minimum separation work ~42 kWh/t at 13% CO₂ vs ~63 kWh/t at 4%. Sources: AIChE/NETL presentations (not ScienceDirect).",S:"Simulated regeneration energy with impurities: Mg-MOF-74 ~0.36 GJ/t vs zeolite 13X ~0.46 GJ/t. Measured at 86% humidity: Mg-MOF-74 ~5.8 vs 13X ~2.3 mmol/g (Applied Energy 2018; open-access status not verified).",D:"Reported cost range $200–600/t. One study gives $320–380/t for liquid solvent vs $793–2,098/t for solid sorbent; another finds solid sorbent can be below $200/t under favourable assumptions, so the ranking is unsettled.",A:"Most mature option, operating near 1 bar. No cost or energy figure extracted yet.",N:"Reported to need less energy than MEA. No cost figure extracted yet."};
+const el=i=>document.getElementById(i);
+function run(){
+ const c={rt:el("route").value,y:+el("y").value,P:+el("P").value,T:+el("T").value,sc:+el("sc").value,imp:+el("imp").value,wet:+el("wet").value,pur:+el("pur").value};
+ const AL={"PC-NG":"Post-Combustion","PC-Cement":"Industrial"};const pc=c.y/100*c.P, dat=D[AL[c.rt]||c.rt]||{};
+ const res=TECH.map(t=>{
+  let phys=.4*wl(pc,...t.pc)+.25*wt(c.T,...t.t,Math.max(40,(t.t[1]-t.t[0])*.5))+.2*wl(c.sc,...t.sc)+.15;
+  phys-=t.pen(c);
+  if(c.rt=="Direct air capture") phys=t.k=="D"?1:phys*.1; else if(t.k=="D") phys*=.05;
+  const cnt=dat[t.k]||0, prior=Math.min(1,Math.log(1+cnt)/Math.log(1+MAXC));
+  const score=Math.max(0,Math.min(1,.8*phys+.2*prior));
+  const mats=t.mats.map(m=>{let s=.55*wl(pc,...m.pc)+.45*wt(c.T,...m.t,40);
+   if(m.dry&&c.wet) s-=m.dry; if(m.wet&&c.wet) s+=m.wet; if(m.imp&&c.imp) s+=m.imp*(c.imp?1:0);
+   if(m.pur&&c.pur) s+=m.pur; return{n:m.n,s:Math.max(0,Math.min(1,s))}}).sort((a,b)=>b.s-a.s);
+  return{t,score,cnt,mats}}).sort((a,b)=>b.score-a.score);
+ const b=res[0],bm=b.mats[0];
+ const why=[`CO₂ partial pressure = ${c.y}% × ${c.P} bar = <b>${pc.toPrecision(2)} bar</b>`,`Operating temperature ${c.T} °C, scale ${c.sc} t/day`,b.cnt?`${b.cnt} registry projects on the ${c.rt} route use this technology family`:`No registry projects for this combination; ranking is from engineering rules only`];
+ const warn=[];
+ if(pc<.01&&c.rt!="Direct air capture")warn.push("Very low CO₂ partial pressure: capture energy and cost rise steeply.");
+ if(b.score<.5)warn.push("No technology fits these conditions well; consider adjusting pressure, concentration or scale, or a hybrid process.");
+ if(c.imp==1&&b.t.k=="S")warn.push("SO₂/NOₓ degrade most sorbents; pre-treat the gas.");
+ el("out").innerHTML=`<div class="card top"><div class="n">BEST TECHNOLOGY</div><h2>${b.t.n}</h2><div>Recommended material: <b>${bm.n}</b></div><div class="n" style="margin:6px 0">${b.t.note}</div><div class="n" style="margin:6px 0"><b>Literature evidence:</b> ${EV[b.t.k]||"No numbers extracted yet for this technology."}</div>
+ <span class="chip">fit ${(b.score*100).toFixed(0)}%</span><span class="chip">material fit ${(bm.s*100).toFixed(0)}%</span>
+ <ul>${why.map(w=>`<li>${w}</li>`).join("")}${warn.map(w=>`<li><b>Caution:</b> ${w}</li>`).join("")}</ul></div>
+ <div class="card"><b>All technologies ranked</b>${res.map(r=>`<div class="row"><span>${r.t.n.split(" (")[0]}</span><div class="bar"><i style="width:${r.score*100}%"></i></div><span>${(r.score*100).toFixed(0)}%</span></div>`).join("")}</div>
+ <div class="card"><b>Material options for ${b.t.n.split(" (")[0]}</b>${b.mats.map(m=>`<div class="row"><span style="grid-column:1">${m.n}</span><div class="bar"><i style="width:${m.s*100}%"></i></div><span>${(m.s*100).toFixed(0)}%</span></div>`).join("")}</div>`}
+el("go").onclick=run;
+el("route").onchange=()=>{const p={"Post-Combustion":[13,1.1,50],"PC-NG":[4,1.1,50],"PC-Cement":[15,1.1,60],"Pre-Combustion":[35,30,35],"Oxycombustion":[75,1.1,50],"Industrial":[20,1.1,60],"Separation":[10,20,30],"Direct air capture":[.042,1,20]}[el("route").value];el("y").value=p[0];el("P").value=p[1];el("T").value=p[2]};
+run();
+</script></body></html>
